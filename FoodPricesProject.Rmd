@@ -1,0 +1,877 @@
+---
+title: "AnalysisR"
+author: "Carlos Arauz"
+date: "10/11/2021"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(hrbrthemes)
+library(writexl)
+library(readxl)
+library(lubridate)
+library(skimr)
+library(forcats)
+library(corrplot)
+library(data.table)
+library(quantmod)
+library(hash)
+library(gapminder)
+library(GGally)
+
+```
+#Loading databases
+
+##Loading first data set
+
+This dataset contains Global Food Prices data from the World Food Programme 
+covering foods such as maize, rice, beans, fish, and sugar for 76 countries 
+and some 1,500 markets.It is updated weekly but contains to a large extent 
+monthly data. The data goes back as far as 1992 for a few countries, 
+although many countries started reporting from 2003 or thereafter.
+   
+Source: https://data.humdata.org/dataset/wfp-food-prices
+
+```{r}
+global.food.prices.database.wfp.1 <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/global-food-prices-database-wfp-1.csv")
+head(global.food.prices.database.wfp.1)
+```
+
+
+
+
+
+##Loading second data set
+   
+   This data set containts agriculture percent of GDP by year by country
+   
+```{r}
+  agriculture_percent_of_gdp <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/agriculture_percent_of_gdp.csv")
+      head(agriculture_percent_of_gdp)
+```
+
+Source: https://data.worldbank.org/indicator/NV.AGR.TOTL.ZS
+
+##Loading third Data Set 
+
+containts Population by year by country 
+Source: https://data.worldbank.org/indicator/SP.POP.TOTL
+
+```{r}
+library(readxl)
+ population <- read_excel("~/Desktop/Project/Food Prices/Databases/R-Data/population.xls")
+ population2 <- read_excel("~/Desktop/Project/Food Prices/Databases/R-Data/population2.xls")
+```
+
+
+##Loading 4th data set
+
+This database containts Gdp Per Capita by year by country
+ 
+ #Source:https://data.worldbank.org/indicator/NY.GDP.PCAP.CD
+ 
+ 
+```{r}
+gdp_per_cap <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/gdp_per_cap.csv")
+head(gdp_per_cap)
+```
+
+##Loading 5th data set
+
+data set with PPP Dollars
+
+https://data.worldbank.org/indicator/PA.NUS.PPP
+
+```{r}
+
+ppp <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/ppp_world.csv")
+head (ppp)
+
+```
+#Loading 6th dataset
+
+
+Source: http://data.un.org/Data.aspx?d=WDI&f=Indicator_Code%3aEP.PMP.SGAS.CD
+
+
+```{r}
+oil_prices<- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/UNdata_Export_20211204_012639355.csv")
+oil_prices<-oil_prices %>% select(1,2,3)
+oil_prices<-oil_prices %>% rename("oil_price" = "Value","country"= "Country.or.Area","year"="Year")
+oil_prices<-transform(oil_prices, year = as.double(year))
+```
+
+
+
+
+
+#Cleaning data to join databases
+ 
+
+##database1: 
+ 
+getting rid of rows that will not be used and renaming rows name and adding
+purchasing power parity to database
+
+```{r}
+ppp<-ppp %>% select(1,5:25)
+
+colnames(ppp)[1] <- "country"
+
+ ppp1 <- gather(ppp,year,purchasingpp,-country)
+ 
+ppp1$year <- strtoi(substring(ppp1$year,2))
+
+ppp1[is.na(ppp1)] <- 0
+  
+ppp1<-ppp1 %>% filter(purchasingpp>0)
+
+
+```
+
+##database1: 
+ 
+getting rid of rows that will not be used and renaming rows name and adding
+purchasing power parity to database
+
+```{r}
+gf<- global.food.prices.database.wfp.1 %>% rename("country" = "adm0_name", "year"= "mp_year","city" = "adm1_name","product"="cm_name")
+
+gf<-inner_join(gf,ppp1,by=c("country","year"))
+
+ gf<-  gf %>% select(2,8,10,12,14,16,17,19) %>%  filter(mp_price<10000,pt_name=="Retail")
+ 
+```
+
+
+summarizing data by products with same country and year.
+
+```{r}
+gf<-gf %>% 
+    group_by(product,country,year,um_name,purchasingpp,cur_name) %>% 
+    summarize(price=sum(mp_price),
+              count=n()
+              )
+```
+
+
+```{r}
+gf<-transform(gf, price_average = price / count)
+```
+
+Only using Kilograms as it is the measurement that appears the most. 
+
+```{r}
+gf<-gf %>% filter(um_name=="KG",)
+```
+
+
+changing all the results from diffrent types of currency to usd
+
+```{r}
+unique.currency = unique(gf$cur_name)
+from <- unique.currency
+to <- rep("USD",length(from))
+conversion <- getQuote(paste0(from, to, "=X"))
+summary(is.na(conversion$Last))
+ 
+current.price <-  conversion$Last
+h= hash()
+h[from]=current.price
+
+conversion1<-conversion %>% select(2)
+
+conversion2<-tibble::rownames_to_column(conversion1, "currency")
+
+
+conversion3<-conversion2 %>% separate(currency, c("cur_name", "value"), "USD=X")
+
+conversion4<-conversion3 %>% select(1,3)
+
+
+gf2<-inner_join(gf,conversion4,by="cur_name")
+
+gf2<-transform(gf2,USD_price = price_average*Last)
+
+gf2<-gf2 %>% select(1:3,5,8,11)
+
+
+gf2<-gf2 %>% separate(product, c("main_product", "description"), " ", extra = "merge")
+
+
+head(gf2)
+
+```
+
+
+#database2: 
+
+Cleaning database editing, so thtat years appear as a column
+
+```{r}
+ colnames(agriculture_percent_of_gdp)[1] <- "country"
+ 
+ agri_per <- gather(agriculture_percent_of_gdp,year,agr_gdp_per,-country)
+ 
+agri_per$year <- strtoi(substring(agri_per$year,2))
+
+
+agri_per[is.na(agri_per)] <- 0
+  
+agri_per2<-agri_per %>% filter(agr_gdp_per>0)
+
+```
+
+
+#Database3:
+
+#Joining all years together and editing, so that years apper as a column
+
+```{r}
+population01<-population %>% select(1,5:50)
+
+colnames(population01)[1] <- "country"
+
+population1 <- gather(population01,year,population,-country)
+
+
+colnames(population2)[1]<-"country"
+
+population02<- gather(population2,year,population,-country)
+
+
+population03<-full_join(population1,population02)
+
+
+population03 <- population03 %>%  
+   mutate(year =   suppressWarnings(as.numeric(year)))
+
+
+```
+
+
+
+#Database4:
+
+Renaming columns to join tables
+
+
+```{r}
+gdp_per_cap01<-gdp_per_cap %>% select(1,5:66)
+
+colnames(gdp_per_cap01)[1] <- "country"
+
+gdp_per_cap1 <- gather(gdp_per_cap01,year,gdp_per_cap,-country)
+
+gdp_per_cap1$year <- strtoi(substring(gdp_per_cap1$year,2))
+
+
+gdp_per_cap1[is.na(gdp_per_cap1)] <- 0
+
+gdp_per_cap_02<-gdp_per_cap1 %>% filter(gdp_per_cap>1)
+
+
+```
+
+
+# Joining tables
+
+```{r}
+data1<-inner_join(gf2,agri_per2,by=c("country","year"))
+
+data2<-inner_join(population03,gdp_per_cap_02,by=c("country","year"))
+
+database<-inner_join(data1,data2,by=c("country","year"))
+
+gapminder1<-gapminder %>% select(1,2)
+
+gapminder2 <- unique( gapminder1 )
+
+database<-inner_join(database,gapminder2,by=("country"))
+   
+
+```
+
+
+ This is the database we have now
+ 
+ 
+ 
+```{r}
+head(database)
+
+```
+ 
+ Now we have our final database where we have information of the product, country,
+ continent, usd price, countries agriculture as percent to GDP, GDP Per capita,
+ and population.the data range is from 1992-2018, but mostly from 2011-2018.
+The mean price of our items was 0.89 USD with a high sd of 1.32
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Lets make a new variable to have the average price by country
+
+```{r}
+
+database01<-database %>% 
+  group_by(main_product,year) %>% 
+  summarize(count=n(),
+            total_price=sum(USD_price))
+
+database01<-transform(database01,ave_price = total_price/count)
+
+head(database01)
+
+```
+
+
+Lets make a variable that have the sum of the top 5 products with most data points to calculate if they have had 
+a similiar behavior of price fluctuation 
+```{r}
+targetd<-c("Rice","Maize","Wheat",
+"Sorghum","Beans")
+database02<-filter(database01, main_product %in% targetd)
+database02<-transform(database02,ave_price = total_price/count)
+
+database02<-database02 %>% 
+  group_by(year) %>% 
+  summarize(ave_price=sum(ave_price))
+
+
+ggplot(database02, aes(x=year, y=ave_price)) + 
+   geom_point(size=3) 
+```
+
+
+It seems the ave_price of the combination of the top 5 products increase by year.
+
+
+
+
+
+##Lets do a regression analysis to see if variable price can be explained by 
+variable time
+
+```{r}
+food.reg<-lm(ave_price ~ year, data=database02) 
+plot(ave_price ~ year, data=database02) 
+abline(food.reg$coef)
+```
+
+#Basic diagnosis
+```{r}
+summary(food.reg)
+```
+
+
+##checking residuals
+
+```{r}
+ library(broom)
+tidy(food.reg)
+augment(food.reg)
+augment(food.reg) %>%  ggplot(aes(x = year, y = .resid))+
+   geom_point() + geom_hline(aes(yintercept = 0))
+```
+
+
+Histogram and Normality plot
+
+
+
+```{r}
+par(mfrow=c(1,2)) 
+hist(food.reg$resi) 
+qqnorm(food.reg$resi) 
+qqline(food.reg$resi)
+```
+
+The histogram is skewed th the right. There are gaps, but nothing to be worried about
+
+The dots in the Q-Q plot appears close to the reference line.
+
+
+## Test of normality
+
+```{r}
+shapiro.test(food.reg$residuals)
+```
+
+Since P-value is 0.74 we accept the null hypothesis and believe the residuals
+are normally distributed
+
+##Test of linearity
+
+```{r}
+food.lof<-lm(ave_price ~ as.factor (year), data=database02)
+anova(food.reg, food.lof)
+```
+
+
+At a P-value of 0.90 we accept the null hypothesis and conclude the model
+fits the data
+
+```{r}
+summary(food.reg)
+```
+
+
+Regression Formula= Y= -42.08+ 0.021X
+As time increases price tends to increase lets analyze more profoundly why.
+
+
+
+
+```{r}
+summary(database)
+```
+
+
+
+Organizing countries by there GDP-Per-Capita to see if a countries GDP
+affects food prices
+
+ 
+```{r}
+databasenew<-database %>% 
+  mutate(class_gdp = ifelse(between(gdp_per_cap, 113.5, 639), "low_class",
+                                   ifelse(between(gdp_per_cap, 639, 981.9), "low_medium_class",
+                                          ifelse(between(gdp_per_cap, 981.9, 2687.5),"high_medium_class",
+                                                 ifelse(between(gdp_per_cap, 2687.5, 12614.8), "high_class", "error")))))
+databasenew %>% count(class_gdp,continent)
+```
+
+```{r}
+
+database01new<-databasenew %>% 
+  group_by(main_product,year,class_gdp) %>% 
+  summarize(count=n(),
+            total_price=sum(USD_price))
+
+database01new<-transform(database01new,ave_price = total_price/count)
+
+head(database01new)
+
+
+```
+
+```{r}
+
+targetd<-c("Rice","Maize","Wheat")
+
+database02new<-filter(database01new, main_product %in% targetd)
+database02new<-transform(database02new,ave_price = total_price/count)
+
+database02new<-database02new %>% 
+  group_by(year,class_gdp) %>% 
+  summarize(conteo=n(),ave_price=sum(ave_price))
+
+database02new<-database02new %>% filter(conteo==3)
+
+ggplot(database02new, aes(x=year, y=ave_price, color=class_gdp)) + 
+   geom_line() 
+```
+
+seeing this chart we can conclude that GDP isn't necessarily correlated with GDP.
+We can see that in high class countries there is a significant difference in food prices
+compare with the other three classes. but as we see the difference between the other three 
+classes the third worse class has the second highest average prices, followed by the
+poorest class having the third highest prices, and the second richest class having the 
+lowest prices.
+
+
+
+Now lets see how food prices in different clusters 
+are affected by different variables depending on their agriculture percent to GDP
+
+```{r}
+databaseagri<-databasenew %>% 
+  group_by(year,class_gdp) %>% 
+  summarize(ave_agri_per=ave(agr_gdp_per))
+
+databaseagri<-databaseagri %>% distinct()
+
+database04new<-inner_join(database02new,databaseagri,by=c("year","class_gdp"))
+
+database04new<-database04new %>% select(1,2,4,5)
+
+ggplot(database04new, aes(x=year, y=ave_agri_per, color=class_gdp)) + 
+   geom_line() 
+
+```
+
+```{r}
+databaseppp<-databasenew %>% 
+  group_by(year,class_gdp) %>% 
+  summarize(ave_ppp=ave(purchasingpp))
+
+databaseappp<-databaseppp %>% distinct()
+
+database04new<-inner_join(database04new,databaseppp,by=c("year","class_gdp"))
+
+database04new<-database04new %>% distinct()
+
+ggplot(database04new, aes(x=year, y=ave_ppp, color=class_gdp)) + 
+   geom_line() 
+```
+
+
+```{r}
+databaseoil<-inner_join(databasenew,oil_prices,by=c("year","country"))
+
+databaseoil2<-databaseoil %>% select(4,5,8,12,13)
+
+databaseoil3<-databaseoil2 %>% 
+  group_by(year,class_gdp) %>% 
+  summarize(ave_oil_p=ave (oil_price))
+
+
+database05new<-inner_join(database04new,databaseoil3,by=c("year","class_gdp"))
+
+database05new<-database05new %>% distinct()
+
+ggplot(database05new, aes(x=year, y=ave_oil_p, color=class_gdp)) + 
+   geom_line() 
+```
+
+
+
+
+
+Adding more variables
+
+Export of goods and services (% of GDP)
+
+```{r}
+exp_gdp_perc <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/API_NE/exp_gdp_perc.csv")
+```
+
+Cleaning database
+
+
+
+```{r}
+exp_gdp_perc2<-exp_gdp_perc %>% select(1,5:65)
+
+colnames(exp_gdp_perc2)[1] <- "country"
+
+exp_gdp_perc3 <- gather(exp_gdp_perc2,year,exp_perc,-country)
+ 
+exp_gdp_perc3$year <- strtoi(substring(exp_gdp_perc3$year,2))
+
+exp_gdp_perc3[is.na(exp_gdp_perc3)] <- 0
+  
+exp_gdp_perc3<-exp_gdp_perc3 %>% filter(exp_perc>0)
+```
+
+
+```{r}
+database06new<-inner_join(databasenew,exp_gdp_perc3,by=c("year","country"))
+
+database07new<-database06new %>% select(4,12,13)
+
+database07new<-database07new %>% distinct()
+
+database08new<-database07new %>% 
+  group_by(year,class_gdp) %>% 
+   summarize(median_exp=median(exp_perc))
+
+
+
+database04new<-inner_join(database04new,database08new,by=c("year","class_gdp"))
+
+
+```
+
+
+
+
+
+
+```{r}
+kwh_per_capita <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/API_LP/kwh_per_capita.csv")
+```
+
+```{r}
+kwh2<-kwh_per_capita %>% select(1,5:65)
+
+colnames(kwh2)[1] <- "country"
+
+kwh2 <- gather(kwh2,year,kwh,-country)
+ 
+kwh2$year <- strtoi(substring(kwh2$year,2))
+
+kwh2[is.na(kwh2)] <- 0
+  
+kwh2<-kwh2 %>% filter(kwh>0)
+```
+
+
+```{r}
+database12new<-inner_join(databasenew,kwh2,by=c("year","country"))
+
+database13new<-database12new %>% select(4,12,13)
+
+database13new<-database13new %>% distinct()
+
+database14new<-database13new %>% 
+  group_by(year,class_gdp) %>% 
+   summarize(median_kwh=median(kwh))
+
+
+
+database04new<-inner_join(database04new,database14new,by=c("year","class_gdp"))
+
+database04new<-database04new %>% distinct()
+```
+
+
+
+
+
+
+```{r}
+agri_land <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/API_LP/agri_land.csv")
+```
+
+
+
+
+```{r}
+agri_land2<-agri_land %>% select(1,5:65)
+
+colnames(agri_land2)[1] <- "country"
+
+agri_land2 <- gather(agri_land2,year,al,-country)
+ 
+agri_land2$year <- strtoi(substring(agri_land2$year,2))
+
+agri_land2[is.na(agri_land2)] <- 0
+  
+agri_land2<-agri_land2 %>% filter(al>0)
+```
+
+
+```{r}
+database15new<-inner_join(databasenew,agri_land2,by=c("year","country"))
+
+database16new<-database15new %>% select(4,12,13)
+
+database16new<-database16new %>% distinct()
+
+database17new<-database16new %>% 
+  group_by(year,class_gdp) %>% 
+   summarize(ave_al=ave(al))
+
+
+
+database04new<-inner_join(database04new,database17new,by=c("year","class_gdp"))
+
+database04new<-database04new %>% distinct()
+```
+
+
+
+```{r}
+inc_share_lowesr_20 <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/API_LP/inc_share_lowesr_20.csv")
+```
+
+
+```{r}
+inc_share_lowesr_202<-inc_share_lowesr_20 %>% select(1,5:65)
+
+colnames(inc_share_lowesr_202)[1] <- "country"
+
+inc_share_lowesr_202 <- gather(inc_share_lowesr_202,year,is,-country)
+ 
+inc_share_lowesr_202$year <- strtoi(substring(inc_share_lowesr_202$year,2))
+
+inc_share_lowesr_202[is.na(inc_share_lowesr_202)] <- 0
+  
+inc_share_lowesr_202<-inc_share_lowesr_202 %>% filter(is>0)
+```
+
+
+```{r}
+database18new<-inner_join(databasenew,inc_share_lowesr_202,by=c("year","country"))
+
+database19new<-database18new %>% select(4,12,13)
+
+database19new<-database19new %>% distinct()
+
+database20new<-database19new %>% 
+  group_by(year,class_gdp) %>% 
+   summarize(median_is=median(is))
+
+
+
+database04new<-inner_join(database04new,database20new,by=c("year","class_gdp"))
+
+database04new<-database04new %>% distinct()
+```
+
+
+
+
+
+
+```{r}
+Foodlm26 = lm(ave_price ~  ave_ppp + median_exp  + median_kwh + median_is, data = database04new)
+
+summary(Foodlm26)
+```
+
+```{r}
+gdp_per_capita <- read.csv("~/Desktop/Project/Food Prices/Databases/R-Data/gdp_per_capita.csv")
+```
+
+
+```{r}
+gdp_per_capita2<- gdp_per_capita %>% select(1,5:65)
+
+colnames(gdp_per_capita2)[1] <- "country"
+
+gdp_per_capita2 <- gather(gdp_per_capita2,year,gdp,-country)
+ 
+gdp_per_capita2$year <- strtoi(substring(gdp_per_capita2$year,2))
+
+gdp_per_capita2[is.na(gdp_per_capita2)] <- 0
+  
+gdp_per_capita2<-gdp_per_capita2 %>% filter(gdp>0)
+```
+
+
+```{r}
+database21new<-inner_join(databasenew,gdp_per_capita2,by=c("year","country"))
+
+database22new<-database21new %>% select(4,12,13)
+
+database22new<-database22new %>% distinct()
+
+database22new<-database22new %>% 
+  group_by(year,class_gdp) %>% 
+   summarize(median_gdp=ave(gdp))
+
+
+
+database04new<-inner_join(database04new,database22new,by=c("year","class_gdp"))
+
+database04new<-database04new %>% distinct()
+```
+
+
+
+```{r}
+Foodlm26 = lm(ave_price ~  ave_ppp + median_exp  + median_kwh + median_is , data = database04new)
+
+summary(Foodlm26)
+```
+
+Final regression formula= Y= 1.8332949+ 0.0005717(ave_ppp)+  
+-0.0293854(median_exp)+ 0.0015150 median_kwh + -0.0743372 (median_is) 
+
+
+##checking residuals
+
+```{r}
+tidy(Foodlm26)
+augment(Foodlm26)
+augment(Foodlm26) %>%  ggplot(aes(x = ave_price, y = .resid))+
+   geom_point() + geom_hline(aes(yintercept = 0))
+```
+
+
+```{r}
+par(mfrow=c(1,2)) 
+hist(Foodlm26$resi) 
+qqnorm(Foodlm26$resi) 
+qqline(Foodlm26$resi)
+```
+The histogram is skewed to the left. There are gaps, but nothing to be worried about
+
+The dots in the Q-Q plot appears close to the reference line.
+
+## Test of normality
+
+```{r}
+shapiro.test(Foodlm26$residuals)
+```
+
+
+Since P-value is 0.0724 we accept the null hypothesis and believe the residuals
+are normally distributed
+
+##Test of linearity
+
+```{r}
+food.lof2<-lm(ave_price ~ as.factor (ave_ppp + median_exp  + median_kwh + median_is), data=database04new)
+anova(Foodlm26, food.lof2)
+```
+
+At a P-value of 5.15 we accept the null hypothesis and conclude the model fits the data
+
+
+```{r}
+databasenewnew<-full_join(databasenew,inc_share_lowesr_202,by=c("year","country"))
+
+databasenewnew2<-full_join(databasenewnew,agri_land2,by=c("year","country"))
+
+databasenewnew4<-full_join(databasenewnew2,kwh2,by=c("year","country"))
+
+databasenewnew5<-full_join(databasenewnew4,exp_gdp_perc3,by=c("year","country"))
+
+```
+
+
+
+```{r}
+fulldataset<-databasenewnew5 %>% select(1,3,4,5,7,8,9,10,13,14,15,16)
+
+fulldataset<-fulldataset %>% distinct()
+
+skim(fulldataset)
+```
+
